@@ -31,14 +31,10 @@ Or build from source with Rust 1.85+ (<https://rustup.rs>): `cargo build --relea
 ## Releasing
 
 CI runs format, clippy and tests on Windows, Linux and macOS for every push and PR.
-To publish a release, bump `version` in `Cargo.toml`, commit, then:
-
-```
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-The Release workflow builds all five targets, attaches the archives plus `SHA256SUMS.txt`,
-and writes release notes from the commit history. It fails if the tag doesn't match `Cargo.toml`.
+To publish a release, bump `version` in `Cargo.toml` and push to `main`. The Release workflow
+sees there's no release for that version yet, builds all five targets, creates the `vX.Y.Z` tag,
+and publishes the archives plus `SHA256SUMS.txt` with notes generated from the commit history.
+Pushing a matching `v*` tag, or running the workflow manually from the Actions tab, works too.
 
 ## 1. Analyze
 

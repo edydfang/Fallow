@@ -1,24 +1,50 @@
 name: Release
 
-# Push a tag like v0.1.0 to build binaries for every platform and publish a GitHub Release.
+# Publishes a GitHub Release with binaries for every platform when either:
+#   - main gets a Cargo.toml version that has no release yet (bump version → push), or
+#   - a tag like v0.2.0 is pushed (must match Cargo.toml), or
+#   - it is run manually from the Actions tab.
 on:
   push:
+    branches: [main]
+    paths: [Cargo.toml, .github/workflows/release.yml]
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag to (re)build and publish, e.g. v0.1.0"
-        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref_type }}" = tag ] && [ "${{ github.ref_name }}" != "$tag" ]; then
+            echo "::error::Tag ${{ github.ref_name }} does not match Cargo.toml version $tag"; exit 1
+          fi
+          if gh release view "$tag" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $tag already exists — nothing to publish (bump the version in Cargo.toml)."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Will publish $tag"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: meta
+    if: needs.meta.outputs.release == 'true'
     name: build (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -32,8 +58,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,14 +66,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-
-      - name: Check tag matches Cargo.toml version
-        shell: bash
-        run: |
-          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "v$v" != "$TAG" ]; then
-            echo "::error::Tag $TAG does not match Cargo.toml version $v"; exit 1
-          fi
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
@@ -66,7 +82,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="fallow-$TAG-${{ matrix.target }}"
+          name="fallow-${{ needs.meta.outputs.tag }}-${{ matrix.target }}"
           mkdir "$name"
           bin=fallow; [[ "${{ matrix.target }}" == *windows* ]] && bin=fallow.exe
           cp "target/${{ matrix.target }}/release/$bin" README.md "$name/"
@@ -85,7 +101,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [meta, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -99,7 +115,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG }}
-          name: fallow ${{ env.TAG }}
+          tag_name: ${{ needs.meta.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: fallow ${{ needs.meta.outputs.tag }}
           generate_release_notes: true
           files: dist/*
