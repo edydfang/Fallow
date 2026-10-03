@@ -1,124 +1,227 @@
 # fallow
 
-Fast mbox analyzer and slimmer, written in Rust. It does the job of
-[gmail-mbox-stats](https://github.com/leodevbro/gmail-mbox-stats) (sender, receiver, CC/BCC
-and domain frequency CSVs) and adds size analysis and a `slim` command that writes a smaller mbox.
+Shrink and clean up a large `.mbox` email archive, such as a Gmail Takeout export.
 
-Speed on a 2-core Linux box with the file in page cache. On a laptop SSD, disk read speed is
-usually the limit.
+- **`fallow stats`** shows what is taking up space: which senders, which Gmail labels, and how much is attachments.
+- **`fallow slim`** writes a **new, smaller mbox**. It can remove mail from senders you list, newsletters, spam or trash, and replace attachments with a short note.
 
-| Test file | Python script | `fallow stats` | `fallow slim` |
-|---|---|---|---|
-| 3.2 GB, 600k small messages | 143 s | 3.5 s | 4.7 s |
-| 2.0 GB, 7k messages with attachments | 31 s | 0.8 s | 2.5 s (with extraction) |
+Your original file is never changed.
 
-The file is memory-mapped and parsed on all CPU cores. Memory use stays low no matter how big the mbox is.
+---
 
 ## Install
 
-Download a prebuilt binary from [Releases](https://github.com/edydfang/Fallow/releases):
+1. Download the file for your system from [Releases](https://github.com/edydfang/Fallow/releases/latest):
 
-| Platform | File |
+   | System | File |
+   |---|---|
+   | Windows | `fallow-…-x86_64-pc-windows-msvc.zip` |
+   | Mac (M1/M2/M3/M4) | `fallow-…-aarch64-apple-darwin.tar.gz` |
+   | Mac (Intel) | `fallow-…-x86_64-apple-darwin.tar.gz` |
+   | Linux | `fallow-…-x86_64-unknown-linux-musl.tar.gz` |
+
+2. Unzip it. Inside is a single program, `fallow` (`fallow.exe` on Windows).
+3. Open a terminal in that folder: PowerShell on Windows, Terminal on Mac.
+   - **Windows:** type `.\fallow.exe` instead of `fallow` in the examples below.
+   - **Mac:** the first time, run `xattr -d com.apple.quarantine ./fallow`, then use `./fallow`.
+
+Check that it works:
+
+```
+fallow --version
+```
+
+Put quotes around any file path that contains spaces, for example `"All mail Including Spam and Trash.mbox"`.
+
+---
+
+## Quick start
+
+These three steps cover the usual workflow.
+
+**1. See where the space goes**
+
+```
+fallow stats archive.mbox
+```
+
+The terminal shows the totals and the biggest senders. A folder named `mbox_stats_<date>/` is created with spreadsheets. See [What `stats` produces](#what-stats-produces).
+
+**2. Preview a cleanup. Nothing is written yet.**
+
+```
+fallow slim archive.mbox --dry-run --senders senders.txt --drop-bulk --strip-attachments
+```
+
+The preview prints how many messages would be removed, how big the result would be, and which senders still take the most space.
+
+**3. Run it for real.** Remove `--dry-run` and name the output file with `-o`:
+
+```
+fallow slim archive.mbox -o cleaned.mbox --senders senders.txt --drop-bulk --strip-attachments
+```
+
+---
+
+## Common tasks
+
+### Remove all mail from certain senders
+
+1. Create a text file, for example `senders.txt`, with the senders to remove:
+
+   ```
+   # Lines starting with # are ignored
+   news@shop.com
+   a@x.com, b@y.com, c@z.com
+   "Shop, Inc" <deals@shop.com>
+   linkedin.com
+   noreply@*
+   ```
+
+   - One or more addresses per line, separated by commas, semicolons or spaces.
+   - A line copied from a mail client, like `"Name" <address>`, works as is.
+   - A bare domain such as `linkedin.com` removes everyone at that domain, including subdomains like `mail.linkedin.com`.
+   - `*` is a wildcard: `noreply@*` matches any `noreply` address.
+   - Capitalization doesn't matter.
+
+2. Run:
+
+   ```
+   fallow slim archive.mbox -o cleaned.mbox --senders senders.txt --dropped-out removed.mbox
+   ```
+
+   - `cleaned.mbox` contains everything except those senders' mail.
+   - `removed.mbox` contains just the removed mail, so nothing is lost. Together the two files are exactly the original.
+
+The summary at the end lists any line in your file that matched no mail at all. That usually means a typo.
+
+> **Shortcut:** in `received_senders.csv` from `fallow stats`, delete the rows you want to **keep**,
+> save, and pass that file directly: `--senders received_senders.csv`.
+
+For one or two senders you can skip the file: `--drop news@shop.com --drop linkedin.com`.
+
+### Remove newsletters, spam and trash
+
+```
+fallow slim archive.mbox -o cleaned.mbox --drop-bulk --drop-label Spam --drop-label Trash
+```
+
+- `--drop-bulk` removes newsletters and marketing mail, meaning anything with an unsubscribe header.
+- `--drop-label` removes mail carrying a Gmail label. This only works for Gmail exports. Other useful labels: `"Category Promotions"`, `"Category Social"`, `"Category Updates"`.
+
+### Shrink attachments
+
+```
+fallow slim archive.mbox -o cleaned.mbox --strip-attachments --min-attachment-kb 100
+```
+
+Each attachment of at least 100 KB is replaced inside the email by a line like
+`[Attachment removed by fallow: "report.pdf" (application/pdf, 1.4 MB)]`. Small ones, such as signature logos, stay.
+
+To **keep the files** while removing them from the mbox, add `--extract-attachments attachments`.
+Every attachment is saved once into the `attachments` folder, even if it was sent many times.
+An `attachments_index.csv` in that folder records which email each file came from.
+
+### Never remove certain people
+
+Add `--keep boss@work.com`, or `--keep-file vip.txt` with the same file format as `senders.txt`.
+These senders are protected from **every** removal rule above.
+
+### Combine everything
+
+Options can be mixed freely:
+
+```
+fallow slim archive.mbox -o cleaned.mbox \
+    --senders senders.txt --keep-file vip.txt \
+    --drop-bulk --drop-label Spam --drop-label Trash \
+    --strip-attachments --min-attachment-kb 100 --extract-attachments attachments \
+    --dropped-out removed.mbox --dropped-csv removed.csv
+```
+
+On Windows PowerShell, put it all on one line, or end each line with a backtick `` ` `` instead of `\`.
+
+---
+
+## Reference
+
+### `fallow slim` options
+
+**Required:** the input mbox, and `-o OUTPUT.mbox` unless you use `--dry-run`.
+
+| What to remove | |
 |---|---|
-| Windows (x64 / ARM) | `fallow-vX.Y.Z-x86_64-pc-windows-msvc.zip` / `…-aarch64-pc-windows-msvc.zip` |
-| Linux x64 (static, any distro) | `fallow-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` |
-| macOS Apple Silicon / Intel | `fallow-vX.Y.Z-aarch64-apple-darwin.tar.gz` / `…-x86_64-apple-darwin.tar.gz` |
+| `--senders FILE` | Remove mail from every sender listed in FILE. `--drop-file` is the same option. |
+| `--drop SENDER` | Remove mail from one sender, domain or `*` pattern. Repeat for more. |
+| `--drop-bulk` | Remove newsletters and marketing mail. |
+| `--drop-label LABEL` | Remove mail with this Gmail label. Repeat for more. |
+| `--keep SENDER` / `--keep-file FILE` | Never remove mail from these senders. |
 
-On macOS, clear the download quarantine once: `xattr -d com.apple.quarantine ./fallow`.
-
-Or build from source with Rust 1.85+ (<https://rustup.rs>): `cargo build --release`.
-
-## Releasing
-
-CI runs format, clippy and tests on Windows, Linux and macOS for every push and PR.
-To publish a release, bump `version` in `Cargo.toml` and push to `main`. The Release workflow
-sees there's no release for that version yet, builds all five targets, creates the `vX.Y.Z` tag,
-and publishes the archives plus `SHA256SUMS.txt` with notes generated from the commit history.
-Pushing a matching `v*` tag, or running the workflow manually from the Actions tab, works too.
-
-## 1. Analyze
-
-```
-fallow stats "All mail Including Spam and Trash.mbox"
-fallow stats archive.mbox --me you@gmail.com --by sender --top 50 -o report
-```
-
-The terminal shows totals, attachment and bulk-mail share, Gmail labels by size, and the top
-sender domains. CSV files go to `mbox_stats_<timestamp>/` (UTF-8 with BOM, so Excel opens them correctly):
-
-| File | Contents |
+| Attachments | |
 |---|---|
-| `general.csv` | Totals |
-| `received_senders.csv`, `received_sender_domains.csv` | Who sends you the most mail, by size |
-| `received_to.csv`, `received_cc.csv` | Recipients of incoming mail |
-| `sent_to.csv`, `sent_to_domains.csv`, `sent_cc.csv`, `sent_bcc.csv` | Who you write to |
-| `labels.csv` | Gmail labels (Takeout exports), with size per label |
-| `largest_messages.csv` | The 1000 biggest messages, with subject, date and attachment names |
+| `--strip-attachments` | Replace attachments with a one-line note. |
+| `--min-attachment-kb N` | Only handle attachments of at least N KB. The default is all. |
+| `--extract-attachments DIR` | Save attachments, with duplicates removed, into DIR. |
 
-Without `--me`, Gmail's `Sent` label decides which mail was sent by you.
-
-## 2. Slim
-
-Do a `--dry-run` first. It prints what would be dropped, plus the largest remaining
-sender domains as candidates for more rules:
-
-```
-fallow slim archive.mbox --dry-run --drop-bulk --drop-label Spam --drop-label Trash \
-    --drop-label "Category Promotions" --drop "noreply@*" --drop linkedin.com
-```
-
-### Remove mail from a list of senders
-
-Put the senders in a text file. Any of these line formats work, and you can mix them:
-
-```
-# senders.txt
-news@shop.com
-a@x.com, b@y.com; c@z.com
-"Shop, Inc" <deals@shop.com>
-linkedin.com
-noreply@*
-```
-
-```
-fallow slim archive.mbox -o cleaned.mbox --senders senders.txt --dropped-out removed.mbox --dropped-csv removed.csv
-```
-
-- Matching ignores case. `linkedin.com` also covers its subdomains, like `mail.linkedin.com`.
-- You can pass a `received_senders.csv` from `fallow stats` directly (edited down to the rows you want removed). Its first column is used.
-- `--dropped-out` writes the removed messages to a separate mbox, so nothing is lost. `kept + removed` is byte-for-byte the original.
-- `--dropped-csv` lists every removed message, with the pattern that matched it, sender, date and subject.
-- The summary lists patterns that matched no message, which catches typos.
-- Use `--senders -` to read the list from stdin.
-
-Then run it for real:
-
-```
-fallow slim archive.mbox -o slim.mbox \
-    --drop-bulk --drop-label Spam --drop-label Trash --drop-file junk.txt --keep-file vip.txt \
-    --strip-attachments --min-attachment-kb 100 --extract-attachments attachments/
-```
-
-| Option | Effect |
+| Output and safety | |
 |---|---|
-| `--drop PATTERN` / `--senders FILE` (alias `--drop-file`) | Drop by sender. `a@b.com` matches one address. `b.com` or `@b.com` matches a domain and its subdomains. `noreply@*` or `*@*.linkedin.com` are globs. A file holds one pattern per line; you can paste the first column of `received_senders.csv`. |
-| `--keep PATTERN` / `--keep-file FILE` | Never drop these senders. This overrides every drop rule. |
-| `--dropped-out FILE` | Also write every dropped message to this mbox. |
-| `--dropped-csv FILE` | List of dropped messages: reason, matched pattern, from, date, subject, size. |
-| `--drop-bulk` | Drop mail with `List-Unsubscribe`, `List-Id` or `Precedence: bulk/list`, i.e. newsletters and marketing. |
-| `--drop-label LABEL` | Drop mail with this Gmail label: `Spam`, `Trash`, `Category Promotions`, `Category Social`, `Category Updates`, and so on. |
-| `--strip-attachments` | Replace each attachment with a placeholder like `[Attachment removed by fallow: "report.pdf" (application/pdf, 1.4 MB)]`. |
-| `--min-attachment-kb N` | Strip or extract only attachments of at least N KB, so small signature images stay. |
-| `--extract-attachments DIR` | Save each attachment, decoded and de-duplicated by content hash, as `<hash>_<name>`. An `attachments_index.csv` records which mail each file came from. |
+| `-o FILE` | Where to write the cleaned mbox. |
+| `--dry-run` | Only show what would happen. Nothing is written. |
+| `--dropped-out FILE` | Also save all removed mail to this mbox. |
+| `--dropped-csv FILE` | A spreadsheet of every removed email: why it was removed, sender, date, subject, size. |
 
-The input file is never modified. Everything in a kept message other than the stripped parts
-is copied byte-for-byte, and the output is a normal mbox that Thunderbird, Apple Mail,
-`mbox-to-sqlite`, GYB and similar tools can read.
+### `fallow stats` options
 
-A typical result: a Gmail export shrinks to roughly 5–15% of its size once attachments are stripped.
+| | |
+|---|---|
+| `-o DIR` | Folder for the spreadsheets. The default is `mbox_stats_<date>`. |
+| `--me ADDRESS` | Your own address, to separate mail you sent from mail you received. For Gmail exports this is detected automatically. |
+| `--by sender` | Show individual senders in the terminal instead of domains. |
+| `--top N` | Number of rows to show in the terminal. The default is 25. |
+| `--no-csv` | Print the summary only, without writing spreadsheets. |
 
-## Notes
+### What `stats` produces
 
-- Messages whose entire body is one attachment (not multipart) are counted, but not stripped.
-- Attachment sizes are decoded sizes. On disk, base64 adds about 37%.
-- If a single message fails to parse, it is passed through unchanged and does not abort the run.
+All files open in Excel. Rows are sorted by size, largest first.
+
+| File | What's in it |
+|---|---|
+| `received_senders.csv` | Everyone who sent you mail: number of messages, size, attachments, newsletters |
+| `received_sender_domains.csv` | The same, grouped by domain |
+| `labels.csv` | Size of each Gmail label |
+| `largest_messages.csv` | The 1000 biggest emails, with sender, date, subject and attachment names |
+| `sent_to.csv`, `sent_to_domains.csv`, `sent_cc.csv`, `sent_bcc.csv` | People you wrote to |
+| `received_to.csv`, `received_cc.csv` | Recipients on the mail you received |
+| `general.csv` | Overall totals |
+
+---
+
+## Good to know
+
+- The cleaned file is a normal mbox. Thunderbird, Apple Mail, `mbox-to-sqlite`, GYB and similar tools can open it.
+- Apart from replaced attachments, every kept email is copied exactly as it was.
+- On a Gmail export, stripping attachments alone usually cuts the file to about 5–15% of its size.
+- Attachment sizes shown are the real file sizes. Inside the mbox they take about 37% more space because of encoding.
+- An email whose whole body is a single attachment, with no text part, is counted but not stripped.
+- If an email can't be parsed, it is copied through unchanged, and the run continues.
+
+## Speed
+
+The file is memory-mapped and parsed on all CPU cores, so memory use stays low even for very large files.
+These timings are from a 2-core Linux machine with the file in page cache. On a laptop, disk read speed is usually the limit.
+
+| Test file | Earlier Python script | `fallow stats` | `fallow slim` |
+|---|---|---|---|
+| 3.2 GB, 600k small emails | 143 s | 3.5 s | 4.7 s |
+| 2.0 GB, 7k emails with attachments | 31 s | 0.8 s | 2.5 s |
+
+## Development
+
+Build from source with Rust 1.85 or newer (<https://rustup.rs>): `cargo build --release`.
+The binary ends up at `target/release/fallow`.
+
+Every push and pull request runs format, lint and test checks on Windows, Linux and macOS.
+
+To publish a release, bump `version` in `Cargo.toml` and push to `main`.
+The Release workflow then builds every platform, creates the `vX.Y.Z` tag, and publishes the
+downloads with a `SHA256SUMS.txt` file.
