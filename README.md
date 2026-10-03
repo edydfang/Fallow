@@ -67,6 +67,30 @@ fallow slim archive.mbox --dry-run --drop-bulk --drop-label Spam --drop-label Tr
     --drop-label "Category Promotions" --drop "noreply@*" --drop linkedin.com
 ```
 
+### Remove mail from a list of senders
+
+Put the senders in a text file. Any of these line formats work, and you can mix them:
+
+```
+# senders.txt
+news@shop.com
+a@x.com, b@y.com; c@z.com
+"Shop, Inc" <deals@shop.com>
+linkedin.com
+noreply@*
+```
+
+```
+fallow slim archive.mbox -o cleaned.mbox --senders senders.txt --dropped-out removed.mbox --dropped-csv removed.csv
+```
+
+- Matching ignores case. `linkedin.com` also covers its subdomains, like `mail.linkedin.com`.
+- You can pass a `received_senders.csv` from `fallow stats` directly (edited down to the rows you want removed). Its first column is used.
+- `--dropped-out` writes the removed messages to a separate mbox, so nothing is lost. `kept + removed` is byte-for-byte the original.
+- `--dropped-csv` lists every removed message, with the pattern that matched it, sender, date and subject.
+- The summary lists patterns that matched no message, which catches typos.
+- Use `--senders -` to read the list from stdin.
+
 Then run it for real:
 
 ```
@@ -77,8 +101,10 @@ fallow slim archive.mbox -o slim.mbox \
 
 | Option | Effect |
 |---|---|
-| `--drop PATTERN` / `--drop-file FILE` | Drop by sender. `a@b.com` matches one address. `b.com` or `@b.com` matches a domain and its subdomains. `noreply@*` or `*@*.linkedin.com` are globs. A file holds one pattern per line; you can paste the first column of `received_senders.csv`. |
+| `--drop PATTERN` / `--senders FILE` (alias `--drop-file`) | Drop by sender. `a@b.com` matches one address. `b.com` or `@b.com` matches a domain and its subdomains. `noreply@*` or `*@*.linkedin.com` are globs. A file holds one pattern per line; you can paste the first column of `received_senders.csv`. |
 | `--keep PATTERN` / `--keep-file FILE` | Never drop these senders. This overrides every drop rule. |
+| `--dropped-out FILE` | Also write every dropped message to this mbox. |
+| `--dropped-csv FILE` | List of dropped messages: reason, matched pattern, from, date, subject, size. |
 | `--drop-bulk` | Drop mail with `List-Unsubscribe`, `List-Id` or `Precedence: bulk/list`, i.e. newsletters and marketing. |
 | `--drop-label LABEL` | Drop mail with this Gmail label: `Spam`, `Trash`, `Category Promotions`, `Category Social`, `Category Updates`, and so on. |
 | `--strip-attachments` | Replace each attachment with a placeholder like `[Attachment removed by fallow: "report.pdf" (application/pdf, 1.4 MB)]`. |
